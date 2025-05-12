@@ -182,7 +182,7 @@ class LinearSchedule(object):
 
 def load_config():
     parser = argparse.ArgumentParser()
-    parser.add_argument("config_file", help="path to config file")
+    parser.add_argument("--config_file", help="path to config file", default="/workspace/linjh/rl/Game-Easy-R1/alfworld/configs/base_config.yaml", required=False)
     parser.add_argument("-p", "--params", nargs="+", metavar="my.setting=value", default=[],
                         help="override params of the config file,"
                              " e.g. -p 'training.gamma=0.95'")
