@@ -53,7 +53,7 @@ class FixedGameAlfredThorEnv(AlfredThorEnv):
         
         obs, dones, infos = self.wait_and_get_info()
         return obs, infos
-
+    
 def init_xvfb(display_id=100):
     """Initialize virtual display for visualization"""
     _xvfb_proc = subprocess.Popen(
@@ -132,52 +132,52 @@ def save_visualization(frame, output_dir, env_idx):
     image_path = os.path.abspath(image_path)    
     return ImageUtils.image_to_show(image_path)
 
-def process_env_instance(args):
-    """Process a single environment instance with its own display"""
-    env_idx, config, game_file, output_dir = args
-    display_id = 100 + env_idx  # Unique display ID for each process
+def process_game(args):
+    """Process a single game in a separate process with its own display"""
+    game_idx, game_file, config, output_dir = args
+    display_id = 100 + game_idx  # Unique display ID for each process
     
     # Initialize virtual display for this process
     xvfb_proc = init_xvfb(display_id)
     
     try:
-        # 创建自定义环境
-        alfred_env = FixedGameAlfredThorEnv(config, train_eval="train", fixed_game_file=game_file)
+        env_type = 'AlfredThorEnv'
+        alfred_env = get_environment(env_type)(config, train_eval="train")
+        alfred_env.json_file_list = [game_file]
         env = alfred_env.init_env(batch_size=1)
         
-        # 重置环境
+        # Reset environment
         obs, infos = env.reset()
         
-        # 获取游戏信息
+        # Get game info
         game_path = infos["extra.gamefile"][0]
         traj_json_path = os.path.join(game_path, "traj_data.json")
         
-        # 加载任务数据
+        # Load task data
         with open(traj_json_path, 'r') as traj_file:
             traj_data = json.load(traj_file)
         
-        # 收集环境信息
+        # Collect environment info
         env_data = {}
-        env_data['Environment ID'] = env_idx + 1
+        env_data['Environment ID'] = game_idx + 1
         env_data['Task Type'] = traj_data['task_type']
         env_data['Scene'] = f"Scene {traj_data['scene']['scene_num']}" if 'scene' in traj_data else 'N/A'
         env_data['Task Description'] = traj_data['turk_annotations']['anns'][0]['task_desc']
         env_data['Initial Observation'] = obs[0].replace('\n', '<br>')
-        env_data['Game File'] = game_file
         
-        # 获取并保存环境图像
+        # Get and save environment image
         try:
             frames = env.get_frames()
-            if len(frames.shape) == 3:  # 单帧
-                env_data['Environment View'] = save_visualization(frames, os.path.join(output_dir, "images"), env_idx)
-            elif len(frames.shape) == 4:  # 多帧
-                env_data['Environment View'] = save_visualization(frames[0], os.path.join(output_dir, "images"), env_idx)
+            if len(frames.shape) == 3:  # Single frame
+                env_data['Environment View'] = save_visualization(frames, os.path.join(output_dir, "images"), game_idx)
+            elif len(frames.shape) == 4:  # Multiple frames
+                env_data['Environment View'] = save_visualization(frames[0], os.path.join(output_dir, "images"), game_idx)
         except Exception as e:
             env_data['Environment View'] = f"Error capturing frame: {str(e)}"
         
         return env_data
     finally:
-        # 清理
+        # Clean up
         try:
             env.close()
         except:
@@ -188,42 +188,44 @@ def process_env_instance(args):
             pass
 
 def main():
-    # 加载配置
+    # Load config
     config = generic.load_config()
     
-    # 创建输出目录
+    # Create output directory
     output_dir = "alfworld_visualizations"
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
     
-    # 初始化环境以获取游戏文件
+    # Initialize environment to get game files
     env_type = 'AlfredThorEnv'
     alfred_env = get_environment(env_type)(config, train_eval="train")
     game_files = alfred_env.json_file_list
-    alfred_env.close()  # 关闭初始环境
+    alfred_env.close()  # Close the initial environment
     
     print(f"Total number of training games: {len(game_files)}")
+    random.shuffle(game_files)
     
-    # 选择一个特定的游戏文件
-    specific_game_file = game_files[0]  # 你可以选择任何一个游戏文件或通过命令行参数指定
-    print(f"Selected game file: {specific_game_file}")
+    # Limit number of games to process
+    max_games = 100
+    # game_files = game_files[:max_games]
+    game_files = [game_files[0] for _ in range(8)]
     
-    # 准备多进程参数
-    num_instances = 8  # 创建8个相同环境的实例
-    args_list = [(i, config, specific_game_file, output_dir) for i in range(num_instances)]
     
-    # 并行处理环境实例
-    num_processes = min(num_instances, cpu_count())
+    # Prepare arguments for multiprocessing
+    num_processes = min(8, cpu_count())  # Use up to 8 processes
+    args_list = [(i, game_file, config, output_dir) for i, game_file in enumerate(game_files)]
+    
+    # Process games in parallel
     with Pool(processes=num_processes) as pool:
-        results = list(tqdm(pool.imap(process_env_instance, args_list), total=len(args_list)))
+        results = list(tqdm(pool.imap(process_game, args_list), total=len(args_list)))
     
-    # 生成HTML报告
+    # Generate HTML report
     html_path = os.path.join(output_dir, "environment_report.html")
     df = pd.DataFrame(results)
+    df = df.sort_values('Task Type')
     generate_html_report(df=df, output_path=html_path)
     
     print(f"Visualization completed. HTML report saved to {html_path}")
-    print(f"All {num_instances} environments were initialized with the same game file: {specific_game_file}")
 
 if __name__ == "__main__":
     main()
